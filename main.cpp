@@ -1,34 +1,40 @@
+// Inspiration from https://www.david-colson.com/2020/02/09/making-a-simple-ecs.html
 #include <iostream>
 #include <vector>
 #include <thread>
 #include <chrono>
 #include <string_view>
+#include <cstring>
 
 typedef unsigned int Tag;
 typedef size_t EntityId;
+typedef size_t ComponentId;
 
-EntityId ID = 10000;
-
-constexpr const size_t POSITION_COMPONENT = 0;
-constexpr const size_t VELOCITY_COMPONENT = 1;
-constexpr const size_t SHAPE_COMPONENT    = 2;
-constexpr const size_t PHYSICAL_COMPONENT = 3;
-constexpr const size_t SIZE_COMPONENT     = 4;
-constexpr const size_t ANOUNCE_COMPONENT  = 5;
-
-template<size_t componentId>
-inline Tag tag() {
-	return 1 << componentId;
-}
+EntityId ENTITY_ID = 0;
 
 typedef double Z;
 
-// NOTE ML this is a bug in cppcheck
-// if declared struct, a false positive of unusedStructMember is reported
 struct Vec3 { Z x, y, z; };
 struct Color { Z r, g, b; };
+
+struct Position { Vec3 pos; };
+struct Velocity { Vec3 vel; };
+struct Shape { Color color; };
 struct Physical { Z mass; };
-struct Anounce { std::string greeting; };
+struct Size { Vec3 size; };
+struct Anounce { char greeting[30]; };
+
+ComponentId COMPONENT_ID = 0;
+template<typename Component>
+ComponentId id() {
+	static ComponentId i = COMPONENT_ID++;
+	return i;
+}
+
+template<typename Component>
+Tag tag() {
+	return 1 << id<Component>();
+}
 
 unsigned short MAX_ENTITIES = -1;
 
@@ -57,8 +63,22 @@ struct Entity {
 	EntityId id;
 	Tag components;
 
-	explicit Entity() : id(++ID), components(0) {}
-	explicit Entity(Tag _components) : id(++ID), components(_components) {}
+	// TODO ML reuse ids from deleted entities
+	explicit Entity() : id(++ENTITY_ID), components() {}
+
+	template<typename Component>
+	Entity& addComponent() {
+		std::cout << "add component to entity with component tag\n";
+		std::cout << "before mutation: " << components << "\n";
+		components = components | (tag<Component>());
+		std::cout << "after mutation:  " << components << "\n";
+		return *this;
+	}
+
+	template<typename Component>
+	Entity& removeComponent() {
+		components = components & (~(tag<Component>()));
+		return *this; }
 };
 
 struct Components {
@@ -66,57 +86,23 @@ struct Components {
 
 	Components() {}
 
-
-	void init(Entity const& e) {
-		// TODO ML init all components defined by the entity components tag
+	template<typename Component>
+	Component* assign(Entity& entity) { // TODO pass component object as initializer
+		std::cout << "Assigning component " << id<Component>() << " to " << entity.id << "\n";
+		if (componentPools.size() <= id<Component>()) {
+			componentPools.resize(id<Component>() + 1, nullptr);
+		}
+		if (componentPools[id<Component>()] == nullptr) {
+			componentPools[id<Component>()] = new ComponentPool(tag<Component>(), sizeof(Component));
+		}
+		auto cp = new ((*componentPools[id<Component>()])[entity.id]) Component();
+		entity.addComponent<Component>();
+		return cp;
 	}
 
-	template<size_t componentId>
-	void assign(EntityId entityId) {
-		std::cout << "Assigning component " << componentId << " to " << entityId << "\n";
-		if (componentPools.size() <= componentId) {
-			componentPools.resize(componentId + 1, nullptr);
-		}
-		if (componentPools[componentId] == nullptr) {
-			componentPools[componentId] = new ComponentPool(tag<componentId>(), componentSize<componentId>());
-		}
-		initComponent<componentId>((*componentPools[componentId])[entityId]);
-	}
-
-	template<size_t componentId>
-	constexpr size_t componentSize() {
-		switch (componentId) {
-			case POSITION_COMPONENT:
-			case VELOCITY_COMPONENT:
-			case SIZE_COMPONENT:
-				return sizeof(Vec3);
-			case SHAPE_COMPONENT:
-				return sizeof(Color);
-			case PHYSICAL_COMPONENT:
-				return sizeof(Physical);
-			case ANOUNCE_COMPONENT:
-				return sizeof(Anounce);
-		}
-	}
-
-	template<size_t componentId>
-	void initComponent(void* d) {
-		switch (componentId) {
-			case POSITION_COMPONENT:
-			case VELOCITY_COMPONENT:
-			case SIZE_COMPONENT:
-				new (d) Vec3();
-				break;
-			case SHAPE_COMPONENT:
-				new (d) Color();
-				break;
-			case PHYSICAL_COMPONENT:
-				new (d) Physical();
-				break;
-			case ANOUNCE_COMPONENT:
-				new (d) Anounce();
-				break;
-		}
+	template<typename Component>
+	Component* get(EntityId entityId) {
+		return (Component*)(*componentPools[id<Component>()])[entityId];
 	}
 };
 
@@ -129,46 +115,50 @@ struct System {
 	}
 
 	bool matchesSignature(Tag components) {
+		std::cout << "components " << components << "\n";
+		std::cout << "signature  " << signature << "\n";
 		return (components & signature) == signature;
 	}
 
-	// void update(Components, Entities) {
 	// TODO create iterator for all entities with this systems components
-	void update(Entity & e) {
+	void update(Entity & e, Components& components) {
 		if (!matchesSignature(e.components)) {
 			return;
 		}
-		handleEntity(e);
+		handleEntity(e, components);
 	}
 
-	virtual void handleEntity(Entity & e) = 0;
+	virtual void handleEntity(Entity & e, Components components) = 0;
 };
 
 struct AnouncePositionSystem : System {
-	AnouncePositionSystem() : System("AnouncePositionSystem", ANOUNCE_COMPONENT | POSITION_COMPONENT) {}
+	AnouncePositionSystem() : System("AnouncePositionSystem", tag<Anounce>() | tag<Position>()) {}
 
-	void handleEntity(Entity & e) override {
-		// TODO get anounce and position
-		// if we manage to encode this in the template
-		// we should be able to do Component<AnounceComponent>(e) and Component<PositionComponent>(e)
-		// or something
-		std::cout << "I am " << e.id << " at the position 0,0\n";
+	void handleEntity(Entity & e, Components components) override {
+		auto p = components.get<Position>(e.id);
+		std::cout << "I am " << e.id << " at the position " << p->pos.x << ", " << p->pos.y;
+		// TODO how do we even store string data?
+		// std::cout << "ANOUNCE MESSAGE " << (const char*)(components.get<Anounce>(e.id)) << "\n";
 	}
 };
 
 struct MoveSystem : System {
-	MoveSystem() : System("MoveSystem", POSITION_COMPONENT | VELOCITY_COMPONENT) {}
+	MoveSystem() : System("MoveSystem", tag<Position>() | tag<Velocity>()) {}
 
-	void handleEntity(Entity & e) override {
+	void handleEntity(Entity & e, Components components) override {
 		// TODO update the position of the entity using position and velocity
 		std::cout << "Updating position of " << e.id << "\n";
+		std::cout << "Using velocity x: " << components.get<Velocity>(e.id)->vel.x << "\n";
+		std::cout << "Pos x before: " << components.get<Position>(e.id)->pos.x << "\n";
+		components.get<Position>(e.id)->pos.x += components.get<Velocity>(e.id)->vel.x;
+		std::cout << "Pos x after:  " << components.get<Position>(e.id)->pos.x << "\n";
 	}
 };
 
 struct CollisionSystem : System {
-	CollisionSystem() : System("CollisionSystem", POSITION_COMPONENT | PHYSICAL_COMPONENT | SIZE_COMPONENT) {}
+	CollisionSystem() : System("CollisionSystem", tag<Position>() | tag<Physical>() | tag<Size>()) {}
 
-	void handleEntity(Entity & e) override {
+	void handleEntity(Entity & e, Components components) override {
 		// TODO Update collision quadtree?
 		// TODO create collision event?
 		std::cout << "Checking for collisions of " << e.id << "\n";
@@ -176,9 +166,9 @@ struct CollisionSystem : System {
 };
 
 struct RenderSystem : System {
-	RenderSystem() : System("RenderSystem", POSITION_COMPONENT | SHAPE_COMPONENT) {}
+	RenderSystem() : System("RenderSystem", tag<Position>() | tag<Shape>()) {}
 
-	void handleEntity(Entity & e) override {
+	void handleEntity(Entity & e, Components components) override {
 		// TODO render to the scene with the shape and position of the entity
 		std::cout << "Rendering " << e.id << "\n";
 	}
@@ -191,9 +181,9 @@ struct Entities {
 
 	Entities() {}
 
-	Entity const& create(Tag components) {
-		// std::cout << "Adding entity " << e.id << "\n";
-		entityList.push_back(Entity(components));
+	// TODO Reuse and give the entity its ID here
+	Entity& create() {
+		entityList.push_back(Entity());
 		std::cout << "There are now " << entityList.size() << " entities!" << "\n";
 		return entityList.back();
 	}
@@ -211,18 +201,18 @@ int main() {
 	Entities entities;
 	Components components;
 
-	auto ne = entities.create(ANOUNCE_COMPONENT);
-	components.assign<ANOUNCE_COMPONENT>(ne.id);
+	Entity& ne = entities.create();
+	components.assign<Anounce>(ne);
 
-	auto ne2 = entities.create(ANOUNCE_COMPONENT | POSITION_COMPONENT | VELOCITY_COMPONENT | SHAPE_COMPONENT);
-	components.assign<ANOUNCE_COMPONENT>(ne2.id);
-	components.assign<POSITION_COMPONENT>(ne2.id);
-	components.assign<VELOCITY_COMPONENT>(ne2.id);
-	components.assign<SHAPE_COMPONENT>(ne2.id);
+	Entity& ne2 = entities.create();
+	components.assign<Anounce>(ne2);
+	components.assign<Position>(ne2);
+	components.assign<Velocity>(ne2)->vel = Vec3{0.1,0.1,0.2};
+	components.assign<Shape>(ne2);
 
-	auto ne3 = entities.create(ANOUNCE_COMPONENT | POSITION_COMPONENT);
-	components.assign<ANOUNCE_COMPONENT>(ne3.id);
-	components.assign<POSITION_COMPONENT>(ne3.id);
+	Entity& ne3 = entities.create();
+	components.assign<Anounce>(ne3);
+	components.assign<Position>(ne3);
 
 	Systems systems;
 	systems.add(new AnouncePositionSystem);
@@ -234,9 +224,8 @@ int main() {
 		std::cout << "#####################################\n\n";
 		for (System * s : systems.systemList) {
 			std::cout << "System : " << s->name << "\n";
-			// s->update(scene)
 			for (auto e : entities.entityList) {
-				s->update(e);
+				s->update(e, components);
 			}
 			std::cout << "\n";
 		}
