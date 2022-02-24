@@ -28,13 +28,37 @@ struct Color { Z r, g, b; };
 
 struct Position { Vec3 pos; };
 std::ostream &operator<<(std::ostream &os, Position const& m) { return os << foreground_yellow << "Position{" << m.pos.x << " " << m.pos.y << " " << m.pos.z << "}" << foreground_reset; }
+
 struct Velocity { Vec3 vel; };
 std::ostream &operator<<(std::ostream &os, Velocity const& m) { return os << foreground_yellow << "Velocity{" << m.vel.x << " " << m.vel.y << " " << m.vel.z << "}" << foreground_reset; }
+
 struct Shape { Color color; };
-// TODO make operators
+std::ostream &operator<<(std::ostream &os, Shape const& m) { return os << foreground_yellow << "Shape{" << m.color.r << " " << m.color.g << " " << m.color.b << "}" << foreground_reset; }
+
 struct Physical { Z mass; };
+std::ostream &operator<<(std::ostream &os, Physical const& m) { return os << foreground_yellow << "Physical{" << m.mass << "}" << foreground_reset; }
+
 struct Size { Vec3 size; };
-struct Anounce { char greeting[30]; };
+std::ostream &operator<<(std::ostream &os, Size const& m) { return os << foreground_yellow << "Size{" << m.size.x << " " << m.size.y << " " << m.size.z << "}" << foreground_reset; }
+
+#define STR_MAX 64
+class Info {
+	char _name[STR_MAX];
+public:
+	Info() {
+		strcpy(_name, "");
+	}
+
+	const char* get() const {
+		return _name;
+	}
+
+	Info& set(std::string s) {
+		strcpy(_name, s.substr(0,STR_MAX).c_str());
+		return *this;
+	}
+};
+std::ostream &operator<<(std::ostream &os, Info const& m) { return os << foreground_yellow << "Info{\"" << m.get() << "\"}" << foreground_reset; }
 
 ComponentId COMPONENT_ID = 0;
 template<typename Component>
@@ -128,7 +152,9 @@ struct Components {
 
 	template<typename Component>
 	Component* get(EntityId entityId) {
-		return (Component*)(*componentPools[id<Component>()])[entityId];
+		Component* cp = (Component*)(*componentPools[id<Component>()])[entityId];
+		std::cout << "Got component " << (*cp) << "\n";
+		return cp;
 	}
 };
 
@@ -156,13 +182,13 @@ struct System {
 std::ostream &operator<<(std::ostream &os, System const& m) { return os << foreground_cyan << "System{" << m.name << " " << bits(m.signature) << "}" << foreground_reset; }
 
 struct AnouncePositionSystem : System {
-	AnouncePositionSystem() : System("AnouncePositionSystem", tag<Anounce>() | tag<Position>()) {}
+	AnouncePositionSystem() : System("AnouncePositionSystem", tag<Info>() | tag<Position>()) {}
 
 	void handleEntity(Entity & e, Components components) override {
 		auto p = components.get<Position>(e.id);
 		std::cout << "I am " << e << " at the position " << *p << "\n";
-		// TODO how do we even store string data efficiently?
-		// std::cout << "ANOUNCE MESSAGE " << (const char*)(components.get<Anounce>(e.id)) << "\n";
+		auto a = components.get<Info>(e.id);
+		std::cout << "ANOUNCE MESSAGE " << a->get() << "\n";
 	}
 };
 
@@ -224,16 +250,14 @@ int main() {
 	Components components;
 
 	Entity& ne = entities.create();
-	components.assign<Anounce>(ne);
 
 	Entity& ne2 = entities.create();
-	components.assign<Anounce>(ne2);
+	components.assign<Info>(ne2)->set("John");
 	components.assign<Position>(ne2);
 	components.assign<Velocity>(ne2)->vel = Vec3{0.1,0.1,0.2};
 	components.assign<Shape>(ne2);
 
 	Entity& ne3 = entities.create();
-	components.assign<Anounce>(ne3);
 	components.assign<Position>(ne3);
 
 	Entity& ne4 = entities.create();
