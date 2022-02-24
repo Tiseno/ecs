@@ -45,8 +45,8 @@ std::ostream &operator<<(std::ostream &os, Size const& m) { return os << foregro
 class Info {
 	char _name[STR_MAX];
 public:
-	Info() {
-		strcpy(_name, "");
+	explicit Info(std::string const& s) {
+		set(s);
 	}
 
 	const char* get() const {
@@ -100,7 +100,7 @@ struct ComponentPool {
 	}
 };
 
-std::ostream &operator<<(std::ostream &os, ComponentPool const& m) { return os << foreground_green << "ComponentPool{" << m.id << " " << bits(m.tag) << "}" << foreground_reset; }
+std::ostream &operator<<(std::ostream &os, ComponentPool const& m) { return os << foreground_green << "ComponentPool{" << m.id << " " << m.componentSize << "B " << bits(m.tag) << "}" << foreground_reset; }
 
 struct Entity {
 	EntityId id;
@@ -121,8 +121,6 @@ struct Entity {
 		components = components & (~(tag<Component>()));
 		return *this;
 	}
-
-
 };
 
 EntityId Entity::ENTITY_ID = 0;
@@ -135,25 +133,25 @@ struct Components {
 	Components() {}
 
 	template<typename Component>
-	Component* assign(Entity& entity) { // TODO pass component object as initializer
+	Component* assign(Entity& entity, Component const& init) {
 		if (componentPools.size() <= id<Component>()) {
 			componentPools.resize(id<Component>() + 1, nullptr);
 		}
 		if (componentPools[id<Component>()] == nullptr) {
+			// TODO how can we template component pool? i.e. ComponentPool<Component>() instead of passing everything
 			ComponentPool* newPool = new ComponentPool(id<Component>(), tag<Component>(), sizeof(Component));
 			componentPools[id<Component>()] = newPool;
-			std::cout << "Created " << *newPool << "\n";
+			std::cout << "Created " << *newPool << " for component " << init << "\n";
 		}
-		auto cp = new ((*componentPools[id<Component>()])[entity.id]) Component();
+		auto cp = new ((*componentPools[id<Component>()])[entity.id]) Component(init);
 		entity.addComponent<Component>();
-		std::cout << "Assigned component " << id<Component>() << " to " << entity << "\n";
+		std::cout << "Assigned component " << *cp << " to " << entity << "\n";
 		return cp;
 	}
 
 	template<typename Component>
 	Component* get(EntityId entityId) {
 		Component* cp = (Component*)(*componentPools[id<Component>()])[entityId];
-		std::cout << "Got component " << (*cp) << "\n";
 		return cp;
 	}
 };
@@ -186,9 +184,8 @@ struct AnouncePositionSystem : System {
 
 	void handleEntity(Entity & e, Components components) override {
 		auto p = components.get<Position>(e.id);
-		std::cout << "I am " << e << " at the position " << *p << "\n";
 		auto a = components.get<Info>(e.id);
-		std::cout << "ANOUNCE MESSAGE " << a->get() << "\n";
+		std::cout << "I am " << foreground_cyan << a->get() << foreground_reset << " at " << *p << "\n";
 	}
 };
 
@@ -249,32 +246,42 @@ int main() {
 	Entities entities;
 	Components components;
 
-	Entity& ne = entities.create();
+	{
+		Entity& ne = entities.create();
+		components.assign(ne, Info("Narmud"));
+		components.assign(ne, Position());
 
-	Entity& ne2 = entities.create();
-	components.assign<Info>(ne2)->set("John");
-	components.assign<Position>(ne2);
-	components.assign<Velocity>(ne2)->vel = Vec3{0.1,0.1,0.2};
-	components.assign<Shape>(ne2);
+		Entity& ne2 = entities.create();
+		components.assign(ne2, Info("Dumran"));
+		components.assign(ne2, Position());
+		components.assign(ne2, Velocity{0.1,0.1,0.2});
+		components.assign(ne2, Shape{0,0,0});
 
-	Entity& ne3 = entities.create();
-	components.assign<Position>(ne3);
+		Entity& ne3 = entities.create();
+		components.assign(ne3, Position());
 
-	Entity& ne4 = entities.create();
-	components.assign<Position>(ne4);
-	components.assign<Velocity>(ne4);
-	components.assign<Shape>(ne4);
-	components.assign<Physical>(ne4);
-	components.assign<Size>(ne4);
+		Entity& ne4 = entities.create();
+		components.assign(ne4, Position());
+		components.assign(ne4, Velocity());
+		components.assign(ne4, Shape());
+		components.assign(ne4, Physical());
+		components.assign(ne4, Size());
+	}
 
 	Systems systems;
 	systems.add(new AnouncePositionSystem);
 	systems.add(new MoveSystem);
+	systems.add(new CollisionSystem);
 	systems.add(new AnouncePositionSystem);
 	systems.add(new RenderSystem);
+	std::cout << "\n";
 
+	size_t count = 0;
 	while (true) {
 		std::cout << "#####################################\n\n";
+		if (++count == 3) {
+			entities.entityList[0].removeComponent<Info>();
+		}
 		for (auto e : entities.entityList) {
 			std::cout << e << "\n";
 		}
