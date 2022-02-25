@@ -13,6 +13,9 @@
 #include "ansi_code.h"
 #include "component.h"
 
+std::string newStr = std::string(ANSI_FG_RED) + "new " + ANSI_RESET;
+std::string assignStr = std::string(ANSI_FG_GRAY) + "assign " + ANSI_RESET;
+
 typedef size_t ComponentId;
 ComponentId COMPONENT_ID = 0;
 template<typename Component>
@@ -109,13 +112,13 @@ struct Components {
 			ComponentPool* newPool = new ComponentPool(Component::NAME, id<Component>(), tag<Component>(), sizeof(Component));
 			componentPools[id<Component>()] = newPool;
 #ifdef DEBUG_1
-			std::cout << "Created " << *newPool << "\n";
+			std::cout << newStr << *newPool << "\n";
 #endif
 		}
 		auto cp = new ((*componentPools[id<Component>()])[entity.id]) Component(init);
 		entity.addComponent<Component>();
 #ifdef DEBUG_2
-		std::cout << "Assigned " << *cp << " to " << entity << "\n";
+		std::cout << assignStr << *cp << " to " << entity << "\n";
 #endif
 		return cp;
 	}
@@ -225,7 +228,7 @@ struct Entities {
 	Entity& create() {
 		entityList.push_back(Entity());
 #ifdef DEBUG_2
-		std::cout << "Created " << entityList.back() << " there are now " << entityList.size() << "\n";
+		std::cout << newStr << entityList.back() << " there are now " << entityList.size() << "\n";
 #endif
 		return entityList.back();
 	}
@@ -237,7 +240,7 @@ struct Systems {
 	void add(System* system) {
 		systemList.push_back(system);
 #ifdef DEBUG_1
-		std::cout << "Created " << *systemList.back() << "\n";
+		std::cout << newStr << *systemList.back() << "\n";
 #endif
 	}
 };
