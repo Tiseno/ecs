@@ -1,4 +1,7 @@
-// Inspiration from https://www.david-colson.com/2020/02/09/making-a-simple-ecs.html
+#define DEBUG_1
+#define DEBUG_2
+
+// Heavy inspiration from https://www.david-colson.com/2020/02/09/making-a-simple-ecs.html
 #include <iostream>
 #include <vector>
 #include <thread>
@@ -7,59 +10,10 @@
 #include <cstring>
 #include <bitset>
 
-#define foreground_reset     "\033[0m"
-#define foreground_red       "\033[31m"
-#define foreground_green     "\033[32m"
-#define foreground_yellow    "\033[33m"
-#define foreground_dark_blue "\033[34m"
-#define foreground_magenta   "\033[35m"
-#define foreground_cyan      "\033[36m"
+#include "ansi_code.h"
+#include "component.h"
 
-#define foreground_underline       "\033[4m"
-
-typedef unsigned int Tag;
-typedef size_t EntityId;
 typedef size_t ComponentId;
-
-typedef double Z;
-
-struct Vec3 { Z x, y, z; };
-struct Color { Z r, g, b; };
-
-struct Position { Vec3 pos; };
-std::ostream &operator<<(std::ostream &os, Position const& m) { return os << foreground_yellow << "Position{" << m.pos.x << " " << m.pos.y << " " << m.pos.z << "}" << foreground_reset; }
-
-struct Velocity { Vec3 vel; };
-std::ostream &operator<<(std::ostream &os, Velocity const& m) { return os << foreground_yellow << "Velocity{" << m.vel.x << " " << m.vel.y << " " << m.vel.z << "}" << foreground_reset; }
-
-struct Shape { Color color; };
-std::ostream &operator<<(std::ostream &os, Shape const& m) { return os << foreground_yellow << "Shape{" << m.color.r << " " << m.color.g << " " << m.color.b << "}" << foreground_reset; }
-
-struct Physical { Z mass; };
-std::ostream &operator<<(std::ostream &os, Physical const& m) { return os << foreground_yellow << "Physical{" << m.mass << "}" << foreground_reset; }
-
-struct Size { Vec3 size; };
-std::ostream &operator<<(std::ostream &os, Size const& m) { return os << foreground_yellow << "Size{" << m.size.x << " " << m.size.y << " " << m.size.z << "}" << foreground_reset; }
-
-#define STR_MAX 64
-class Info {
-	char _name[STR_MAX];
-public:
-	explicit Info(std::string const& s) {
-		set(s);
-	}
-
-	const char* get() const {
-		return _name;
-	}
-
-	Info& set(std::string s) {
-		strcpy(_name, s.substr(0,STR_MAX).c_str());
-		return *this;
-	}
-};
-std::ostream &operator<<(std::ostream &os, Info const& m) { return os << foreground_yellow << "Info{\"" << m.get() << "\"}" << foreground_reset; }
-
 ComponentId COMPONENT_ID = 0;
 template<typename Component>
 ComponentId id() {
@@ -67,28 +21,32 @@ ComponentId id() {
 	return i;
 }
 
+typedef unsigned int Tag;
 template<typename Component>
 Tag tag() {
 	return 1 << id<Component>();
 }
 
-unsigned short MAX_ENTITIES = -1;
+unsigned int MAX_ENTITIES = 100000;
 
-std::bitset<7> bits(Tag tag) {
-	return std::bitset<7>(tag);
+std::bitset<9> bits(Tag tag) {
+	return std::bitset<9>(tag);
 }
 
 struct ComponentPool {
-	ComponentId id;
+	std::string name;
 	Tag tag;
 	size_t componentSize;
+	size_t totalSize;
 	char * data;
 
-	ComponentPool(ComponentId _id, Tag _tag, size_t _componentSize) :
-		id(_id),
+	ComponentPool(std::string const& _name, ComponentId _id, Tag _tag, size_t _componentSize) :
+		name(_name),
 		tag(_tag),
-		componentSize(_componentSize) {
-		data = new char[componentSize * MAX_ENTITIES];
+		componentSize(_componentSize),
+		totalSize(componentSize * MAX_ENTITIES)
+	{
+		data = new char[totalSize];
 	}
 
 	~ComponentPool() {
@@ -98,17 +56,26 @@ struct ComponentPool {
 	void* operator[](size_t i) {
 		return data + i * componentSize;
 	}
+
+private: // Disallow copying
+	ComponentPool(ComponentPool const& old);
+	ComponentPool& operator=(ComponentPool const& other);
 };
 
-std::ostream &operator<<(std::ostream &os, ComponentPool const& m) { return os << foreground_green << "ComponentPool{" << m.id << " " << m.componentSize << "B " << bits(m.tag) << "}" << foreground_reset; }
+std::ostream &operator<<(std::ostream &os, ComponentPool const& m) { return os << ANSI_FG_GREEN << "ComponentPool{" << m.name << " " << static_cast<float>(m.totalSize) / 1000000 << "MB " << bits(m.tag) << "}" << ANSI_RESET; }
 
+typedef size_t EntityId;
 struct Entity {
 	EntityId id;
 	Tag components;
+
 	static EntityId ENTITY_ID;
 
-	// TODO ML reuse ids from deleted entities
 	explicit Entity() : id(++ENTITY_ID), components() {}
+
+	void deactivate() {
+		components = 0;
+	}
 
 	template<typename Component>
 	Entity& addComponent() {
@@ -125,7 +92,7 @@ struct Entity {
 
 EntityId Entity::ENTITY_ID = 0;
 
-std::ostream &operator<<(std::ostream &os, Entity const& m) { return os << foreground_magenta << "Entity{" << m.id << " " << bits(m.components) << "}" << foreground_reset; }
+std::ostream &operator<<(std::ostream &os, Entity const& m) { return os << ANSI_FG_MAGENTA << "Entity{" << m.id << " " << bits(m.components) << "}" << ANSI_RESET; }
 
 struct Components {
 	std::vector<ComponentPool*> componentPools;
@@ -139,21 +106,32 @@ struct Components {
 		}
 		if (componentPools[id<Component>()] == nullptr) {
 			// TODO how can we template component pool? i.e. ComponentPool<Component>() instead of passing everything
-			ComponentPool* newPool = new ComponentPool(id<Component>(), tag<Component>(), sizeof(Component));
+			ComponentPool* newPool = new ComponentPool(Component::NAME, id<Component>(), tag<Component>(), sizeof(Component));
 			componentPools[id<Component>()] = newPool;
-			std::cout << "Created " << *newPool << " for component " << init << "\n";
+#ifdef DEBUG_1
+			std::cout << "Created " << *newPool << "\n";
+#endif
 		}
 		auto cp = new ((*componentPools[id<Component>()])[entity.id]) Component(init);
 		entity.addComponent<Component>();
-		std::cout << "Assigned component " << *cp << " to " << entity << "\n";
+#ifdef DEBUG_2
+		std::cout << "Assigned " << *cp << " to " << entity << "\n";
+#endif
 		return cp;
 	}
 
 	template<typename Component>
-	Component* get(EntityId entityId) {
-		Component* cp = (Component*)(*componentPools[id<Component>()])[entityId];
-		return cp;
+	Component* get(Entity const& entity) {
+		if((entity.components & tag<Component>()) != tag<Component>()) {
+			return nullptr;
+		}
+		return (Component*)(*componentPools[id<Component>()])[entity.id];
 	}
+
+	// template<typename Component>
+	// Component* get(EntityId entityId) {
+	// 	return (Component*)(*componentPools[id<Component>()])[entityId];
+	// }
 };
 
 struct System {
@@ -177,25 +155,40 @@ struct System {
 	virtual void handleEntity(Entity & e, Components components) = 0;
 };
 
-std::ostream &operator<<(std::ostream &os, System const& m) { return os << foreground_cyan << "System{" << m.name << " " << bits(m.signature) << "}" << foreground_reset; }
+std::ostream &operator<<(std::ostream &os, System const& m) { return os << ANSI_FG_CYAN << "System{" << m.name << " " << bits(m.signature) << "}" << ANSI_RESET; }
 
-struct AnouncePositionSystem : System {
-	AnouncePositionSystem() : System("AnouncePositionSystem", tag<Info>() | tag<Position>()) {}
+struct TrackPositionSystem : System {
+	TrackPositionSystem() : System("TrackPositionSystem", tag<Position>()) {}
 
 	void handleEntity(Entity & e, Components components) override {
-		auto p = components.get<Position>(e.id);
-		auto a = components.get<Info>(e.id);
-		std::cout << "I am " << foreground_cyan << a->get() << foreground_reset << " at " << *p << "\n";
+		components.get<Position>(e);
+	}
+};
+
+struct InspectSystem : System {
+	InspectSystem() : System("InspectSystem", tag<Inspect>()) {}
+
+	void handleEntity(Entity & e, Components components) override {
+		std::cout << e << "\n";
+		if(components.get<Type>(e) != nullptr)         { std::cout << "\t" << ANSI_FG_MAGENTA << "|" << ANSI_RESET << (*components.get<Type>(e))         << "\n"; }
+		if(components.get<Position>(e) != nullptr)     { std::cout << "\t" << ANSI_FG_MAGENTA << "|" << ANSI_RESET << (*components.get<Position>(e))     << "\n"; }
+		if(components.get<Velocity>(e) != nullptr)     { std::cout << "\t" << ANSI_FG_MAGENTA << "|" << ANSI_RESET << (*components.get<Velocity>(e))     << "\n"; }
+		if(components.get<Acceleration>(e) != nullptr) { std::cout << "\t" << ANSI_FG_MAGENTA << "|" << ANSI_RESET << (*components.get<Acceleration>(e)) << "\n"; }
+		if(components.get<Shape>(e) != nullptr)        { std::cout << "\t" << ANSI_FG_MAGENTA << "|" << ANSI_RESET << (*components.get<Shape>(e))        << "\n"; }
+		if(components.get<Physical>(e) != nullptr)     { std::cout << "\t" << ANSI_FG_MAGENTA << "|" << ANSI_RESET << (*components.get<Physical>(e))     << "\n"; }
+		if(components.get<Size>(e) != nullptr)         { std::cout << "\t" << ANSI_FG_MAGENTA << "|" << ANSI_RESET << (*components.get<Size>(e))         << "\n"; }
+		if(components.get<Brain>(e) != nullptr)        { std::cout << "\t" << ANSI_FG_MAGENTA << "|" << ANSI_RESET << (*components.get<Brain>(e))        << "\n"; }
+		if(components.get<Inspect>(e) != nullptr)      { std::cout << "\t" << ANSI_FG_MAGENTA << "|" << ANSI_RESET << (*components.get<Inspect>(e))      << "\n"; }
+		std::cout << "\t" << ANSI_FG_MAGENTA << "*----------\n" << ANSI_RESET;
 	}
 };
 
 struct MoveSystem : System {
 	MoveSystem() : System("MoveSystem", tag<Position>() | tag<Velocity>()) {}
 
-	void handleEntity(Entity & e, Components components) override {
+	void handleEntity(Entity & e, Components components/*, double deltaTime */) override {
 		// TODO update the position of the entity using position and velocity
-		std::cout << e << " updating position\n";
-		components.get<Position>(e.id)->pos.x += components.get<Velocity>(e.id)->vel.x;
+		components.get<Position>(e)->pos.x += components.get<Velocity>(e)->vel.x;
 	}
 };
 
@@ -203,9 +196,11 @@ struct CollisionSystem : System {
 	CollisionSystem() : System("CollisionSystem", tag<Position>() | tag<Physical>() | tag<Size>()) {}
 
 	void handleEntity(Entity & e, Components components) override {
+		components.get<Position>(e);
+		components.get<Physical>(e);
+		components.get<Size>(e);
 		// TODO Update collision quadtree?
 		// TODO create collision event?
-		std::cout << e << " checking collisions\n";
 	}
 };
 
@@ -213,8 +208,9 @@ struct RenderSystem : System {
 	RenderSystem() : System("RenderSystem", tag<Position>() | tag<Shape>()) {}
 
 	void handleEntity(Entity & e, Components components) override {
+		components.get<Position>(e);
+		components.get<Shape>(e);
 		// TODO render to the scene with the shape and position of the entity
-		std::cout << e << " rendering\n";
 	}
 };
 
@@ -228,7 +224,9 @@ struct Entities {
 	// TODO Reuse and give the entity its ID here
 	Entity& create() {
 		entityList.push_back(Entity());
-		std::cout << "Created " << entityList.back() << "\n";
+#ifdef DEBUG_2
+		std::cout << "Created " << entityList.back() << " there are now " << entityList.size() << "\n";
+#endif
 		return entityList.back();
 	}
 };
@@ -238,21 +236,43 @@ struct Systems {
 
 	void add(System* system) {
 		systemList.push_back(system);
+#ifdef DEBUG_1
 		std::cout << "Created " << *systemList.back() << "\n";
+#endif
 	}
 };
 
+
+void createLord(Components& components, Entities& entities) {
+		static size_t lordCounter = 0;
+		Entity& ne = entities.create();
+		components.assign(ne, Type("Lord", lordCounter++));
+		components.assign(ne, Position{0,0,0});
+		components.assign(ne, Size{10,10,10});
+		components.assign(ne, Shape{});
+		components.assign(ne, Velocity());
+		components.assign(ne, Acceleration());
+		components.assign(ne, Brain(0));
+}
+
 int main() {
+	Systems systems;
+	systems.add(new TrackPositionSystem);
+	systems.add(new MoveSystem);
+	systems.add(new CollisionSystem);
+	systems.add(new TrackPositionSystem);
+	systems.add(new RenderSystem);
+	systems.add(new InspectSystem);
+
 	Entities entities;
 	Components components;
-
 	{
 		Entity& ne = entities.create();
-		components.assign(ne, Info("Narmud"));
+		components.assign(ne, Type("Narmud", 1));
 		components.assign(ne, Position());
 
 		Entity& ne2 = entities.create();
-		components.assign(ne2, Info("Dumran"));
+		components.assign(ne2, Type("Dumran", 1));
 		components.assign(ne2, Position());
 		components.assign(ne2, Velocity{0.1,0.1,0.2});
 		components.assign(ne2, Shape{0,0,0});
@@ -266,34 +286,21 @@ int main() {
 		components.assign(ne4, Shape());
 		components.assign(ne4, Physical());
 		components.assign(ne4, Size());
+		components.assign(ne4, Brain{50});
 	}
 
-	Systems systems;
-	systems.add(new AnouncePositionSystem);
-	systems.add(new MoveSystem);
-	systems.add(new CollisionSystem);
-	systems.add(new AnouncePositionSystem);
-	systems.add(new RenderSystem);
-	std::cout << "\n";
-
-	size_t count = 0;
 	while (true) {
-		std::cout << "#####################################\n\n";
-		if (++count == 3) {
-			entities.entityList[0].removeComponent<Info>();
-		}
-		for (auto e : entities.entityList) {
-			std::cout << e << "\n";
-		}
-		std::cout << "\n";
+#ifdef DEBUG_2
+		std::cout << "\n#####################################\n\n";
+#endif
+		components.get<Brain>(entities.entityList[3])->increase(0.1);
+		createLord(components, entities);
 		for (System * s : systems.systemList) {
-			std::cout << "System :: " << s->name << "\n";
 			for (auto e : entities.entityList) {
 				s->update(e, components);
 			}
-			std::cout << "\n";
 		}
-		std::this_thread::sleep_for(std::chrono::seconds(1));
+		std::this_thread::sleep_for(std::chrono::milliseconds(400));
 	}
 }
 
