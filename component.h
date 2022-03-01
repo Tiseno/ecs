@@ -55,11 +55,13 @@ struct Brain {
 private:
 	Z m_iq;
 public:
-	explicit Brain(Z _iq) : m_iq(_iq) {}
+	static const Z MAX_IQ;
+	explicit Brain(Z _iq) : m_iq(0) {
+		increase(_iq);
+	}
 	inline Z iq() const { return m_iq; }
-	inline void increase(Z add) {
-		static const Z MAX_IQ = 999;
-		m_iq += add;
+	inline void increase(Z _iq) {
+		m_iq += _iq;
 		if(m_iq < -MAX_IQ)
 			m_iq = -MAX_IQ;
 		if(m_iq > MAX_IQ)
@@ -69,6 +71,7 @@ public:
 };
 std::ostream &operator<<(std::ostream &os, Brain const& m) { return os << ANSI_FG_YELLOW << "Brain{" << m.iq() << "}" << ANSI_RESET; }
 std::string Brain::NAME = "Brain";
+const Z Brain::MAX_IQ = 1 << 8;
 
 struct Inspect {
 	bool _;
