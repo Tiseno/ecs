@@ -67,18 +67,41 @@ private: // Disallow copying
 
 std::ostream &operator<<(std::ostream &os, ComponentPool const& m) { return os << ANSI_FG_GREEN << "ComponentPool{" << m.name << " " << static_cast<float>(m.totalSize) / 1000000 << "MB " << bits(m.tag) << "}" << ANSI_RESET; }
 
-typedef size_t EntityId;
+typedef size_t EntityIndex;
+typedef unsigned int EntityVersion;
+
+const EntityIndex INVALID_ENTITY_INDEX(-1);
+
+struct EntityId {
+	EntityIndex index;
+	EntityVersion version;
+
+	bool isValid() {
+		return index != INVALID_ENTITY_INDEX;
+	}
+
+	bool operator!=(EntityId& other) {
+		return !(other.index == index && other.version == version);
+	}
+};
+
+std::ostream &operator<<(std::ostream &os, EntityId const& m) {
+	os << ANSI_FG_GRAY << "EntityId{";
+	if (m.index == INVALID_ENTITY_INDEX) {
+		os << "INVALID";
+	} else {
+		os << m.index;
+	}
+	return os << " " << m.version << "}" << ANSI_RESET;
+}
+
 struct Entity {
 	EntityId id;
 	Tag components;
 
-	static EntityId ENTITY_ID;
+	static EntityIndex ENTITY_INDEX;
 
-	explicit Entity() : id(++ENTITY_ID), components() {}
-
-	void deactivate() {
-		components = 0;
-	}
+	explicit Entity(EntityId _id) : id(_id), components(0) {}
 
 	template<typename Component>
 	Entity& addComponent() {
@@ -91,11 +114,27 @@ struct Entity {
 		components = components & (~(tag<Component>()));
 		return *this;
 	}
+
+	bool isValid() {
+		return id.isValid();
+	}
+
+	bool matchesSignature(Tag signature) {
+		return (components & signature) == signature;
+	}
 };
 
-EntityId Entity::ENTITY_ID = 0;
+EntityIndex Entity::ENTITY_INDEX = 0;
 
-std::ostream &operator<<(std::ostream &os, Entity const& m) { return os << ANSI_FG_MAGENTA << "Entity{" << m.id << " " << bits(m.components) << "}" << ANSI_RESET; }
+std::ostream &operator<<(std::ostream &os, Entity const& m) {
+	os << ANSI_FG_MAGENTA << "Entity{";
+	if (m.id.index == INVALID_ENTITY_INDEX) {
+		os << "INVALID";
+	} else {
+		os << m.id.index;
+	}
+	return os<< " " << m.id.version << " " << bits(m.components) << "}" << ANSI_RESET;
+}
 
 struct Components {
 	std::vector<ComponentPool*> componentPools;
@@ -115,7 +154,7 @@ struct Components {
 			std::cout << newStr << *newPool << "\n";
 #endif
 		}
-		auto cp = new ((*componentPools[id<Component>()])[entity.id]) Component(init);
+		auto cp = new ((*componentPools[id<Component>()])[entity.id.index]) Component(init);
 		entity.addComponent<Component>();
 #ifdef DEBUG_2
 		std::cout << assignStr << *cp << " to " << entity << "\n";
@@ -128,7 +167,7 @@ struct Components {
 		if((entity.components & tag<Component>()) != tag<Component>()) {
 			return nullptr;
 		}
-		return (Component*)(*componentPools[id<Component>()])[entity.id];
+		return (Component*)(*componentPools[id<Component>()])[entity.id.index];
 	}
 
 	// template<typename Component>
@@ -143,19 +182,15 @@ struct System {
 
 	System(std::string const& _name, Tag _signature) : name(_name), signature(_signature) {}
 
-	bool matchesSignature(Tag components) {
-		return (components & signature) == signature;
-	}
-
 	// TODO create iterator for all entities with this systems components
 	void update(Entity & e, Components& components) {
-		if (!matchesSignature(e.components)) {
+		if (!e.isValid() || !e.matchesSignature(signature)) {
 			return;
 		}
 		handleEntity(e, components);
 	}
 
-	virtual void handleEntity(Entity & e, Components components) = 0;
+	virtual void handleEntity(Entity & e, Components& components) = 0;
 };
 
 std::ostream &operator<<(std::ostream &os, System const& m) { return os << ANSI_FG_CYAN << "System{" << m.name << " " << bits(m.signature) << "}" << ANSI_RESET; }
@@ -163,42 +198,46 @@ std::ostream &operator<<(std::ostream &os, System const& m) { return os << ANSI_
 struct TrackPositionSystem : System {
 	TrackPositionSystem() : System("TrackPositionSystem", tag<Position>()) {}
 
-	void handleEntity(Entity & e, Components components) override {
+	void handleEntity(Entity & e, Components& components) override {
 		components.get<Position>(e);
 	}
 };
 
+void printComponents(Entity& e, Components components) {
+		if(components.get<Type>(e) != nullptr)         { std::cout << "\t" << ANSI_FG_MAGENTA << "|" << ANSI_RESET << (*components.get<Type>(e))         ;} // << "\n"; }
+		if(components.get<Position>(e) != nullptr)     { std::cout << "\t" << ANSI_FG_MAGENTA << "|" << ANSI_RESET << (*components.get<Position>(e))     ;} // << "\n"; }
+		if(components.get<Velocity>(e) != nullptr)     { std::cout << "\t" << ANSI_FG_MAGENTA << "|" << ANSI_RESET << (*components.get<Velocity>(e))     ;} // << "\n"; }
+		if(components.get<Acceleration>(e) != nullptr) { std::cout << "\t" << ANSI_FG_MAGENTA << "|" << ANSI_RESET << (*components.get<Acceleration>(e)) ;} // << "\n"; }
+		if(components.get<Shape>(e) != nullptr)        { std::cout << "\t" << ANSI_FG_MAGENTA << "|" << ANSI_RESET << (*components.get<Shape>(e))        ;} // << "\n"; }
+		if(components.get<Physical>(e) != nullptr)     { std::cout << "\t" << ANSI_FG_MAGENTA << "|" << ANSI_RESET << (*components.get<Physical>(e))     ;} // << "\n"; }
+		if(components.get<Size>(e) != nullptr)         { std::cout << "\t" << ANSI_FG_MAGENTA << "|" << ANSI_RESET << (*components.get<Size>(e))         ;} // << "\n"; }
+		if(components.get<Brain>(e) != nullptr)        { std::cout << "\t" << ANSI_FG_MAGENTA << "|" << ANSI_RESET << (*components.get<Brain>(e))        ;} // << "\n"; }
+		if(components.get<Inspect>(e) != nullptr)      { std::cout << "\t" << ANSI_FG_MAGENTA << "|" << ANSI_RESET << (*components.get<Inspect>(e))      ;} // << "\n"; }
+}
+
 struct InspectSystem : System {
 	InspectSystem() : System("InspectSystem", tag<Inspect>()) {}
 
-	void handleEntity(Entity & e, Components components) override {
-		std::cout << e << "\n";
-		if(components.get<Type>(e) != nullptr)         { std::cout << "\t" << ANSI_FG_MAGENTA << "|" << ANSI_RESET << (*components.get<Type>(e))         << "\n"; }
-		if(components.get<Position>(e) != nullptr)     { std::cout << "\t" << ANSI_FG_MAGENTA << "|" << ANSI_RESET << (*components.get<Position>(e))     << "\n"; }
-		if(components.get<Velocity>(e) != nullptr)     { std::cout << "\t" << ANSI_FG_MAGENTA << "|" << ANSI_RESET << (*components.get<Velocity>(e))     << "\n"; }
-		if(components.get<Acceleration>(e) != nullptr) { std::cout << "\t" << ANSI_FG_MAGENTA << "|" << ANSI_RESET << (*components.get<Acceleration>(e)) << "\n"; }
-		if(components.get<Shape>(e) != nullptr)        { std::cout << "\t" << ANSI_FG_MAGENTA << "|" << ANSI_RESET << (*components.get<Shape>(e))        << "\n"; }
-		if(components.get<Physical>(e) != nullptr)     { std::cout << "\t" << ANSI_FG_MAGENTA << "|" << ANSI_RESET << (*components.get<Physical>(e))     << "\n"; }
-		if(components.get<Size>(e) != nullptr)         { std::cout << "\t" << ANSI_FG_MAGENTA << "|" << ANSI_RESET << (*components.get<Size>(e))         << "\n"; }
-		if(components.get<Brain>(e) != nullptr)        { std::cout << "\t" << ANSI_FG_MAGENTA << "|" << ANSI_RESET << (*components.get<Brain>(e))        << "\n"; }
-		if(components.get<Inspect>(e) != nullptr)      { std::cout << "\t" << ANSI_FG_MAGENTA << "|" << ANSI_RESET << (*components.get<Inspect>(e))      << "\n"; }
-		std::cout << "\t" << ANSI_FG_MAGENTA << "*----------\n" << ANSI_RESET;
+	void handleEntity(Entity & e, Components& components) override {
+			std::cout << e << " ";
+			printComponents(e, components);
+			std::cout << "\n";
 	}
 };
 
 struct MoveSystem : System {
 	MoveSystem() : System("MoveSystem", tag<Position>() | tag<Velocity>()) {}
 
-	void handleEntity(Entity & e, Components components/*, double deltaTime */) override {
-		// TODO update the position of the entity using position and velocity
+	void handleEntity(Entity & e, Components& components/*, double deltaTime */) override {
 		components.get<Position>(e)->pos.x += components.get<Velocity>(e)->vel.x;
+		components.get<Position>(e)->pos.y += components.get<Velocity>(e)->vel.y;
 	}
 };
 
 struct CollisionSystem : System {
 	CollisionSystem() : System("CollisionSystem", tag<Position>() | tag<Physical>() | tag<Size>()) {}
 
-	void handleEntity(Entity & e, Components components) override {
+	void handleEntity(Entity & e, Components& components) override {
 		components.get<Position>(e);
 		components.get<Physical>(e);
 		components.get<Size>(e);
@@ -210,29 +249,63 @@ struct CollisionSystem : System {
 struct RenderSystem : System {
 	RenderSystem() : System("RenderSystem", tag<Position>() | tag<Shape>()) {}
 
-	void handleEntity(Entity & e, Components components) override {
+	void handleEntity(Entity & e, Components& components) override {
 		components.get<Position>(e);
 		components.get<Shape>(e);
 		// TODO render to the scene with the shape and position of the entity
 	}
 };
 
-typedef std::vector<Entity> EntityList;
-
 struct Entities {
-	EntityList entityList;
+	std::vector<EntityIndex> freeEntityIndexes;
+	std::vector<Entity> entityList;
 
 	Entities() {}
 
-	// TODO Reuse and give the entity its ID here
 	Entity& create() {
-		entityList.push_back(Entity());
+		if (freeEntityIndexes.size() > 0) {
+			EntityIndex index = freeEntityIndexes.back();
+			freeEntityIndexes.pop_back();
+			Entity& e = entityList[index];
+			e.id = EntityId{index, entityList[index].id.version + 1};
 #ifdef DEBUG_2
-		std::cout << newStr << entityList.back() << " there are now " << entityList.size() << "\n";
+			std::cout << newStr << e << " there are now " << entityList.size() << "\n";
 #endif
-		return entityList.back();
+			return e;
+		} else {
+			entityList.push_back(Entity(EntityId{entityList.size(), 0}));
+			Entity& e = entityList.back();
+#ifdef DEBUG_2
+			std::cout << newStr << e << " there are now " << entityList.size() << "\n";
+#endif
+			return e;
+		}
+	}
+
+	void remove(EntityId id) {
+		if (!id.isValid()) {
+			std::cout << "Did not remove becuase " << id << " is not a valid entity id!\n";
+			return;
+		}
+		if (entityList[id.index].id != id) {
+			std::cout << "Did not remove becuase entity with " << id << " has been removed!\n";
+			return;
+		}
+		Entity& e = entityList[id.index];
+		e.id = EntityId{INVALID_ENTITY_INDEX, e.id.version};
+		e.components = 0;
+		freeEntityIndexes.push_back(id.index);
+		std::cout << "Removed " << id << " and pushed " << id.index << " as a free index!\n";
 	}
 };
+
+std::ostream &operator<<(std::ostream &os, Entities const& m) {
+	os << ANSI_FG_PINK << "Entities{" << m.entityList.size() << " " << m.entityList.size() * sizeof(Entity) << "B " << " [ ";
+	for(auto free : m.freeEntityIndexes) {
+		os << free << " ";
+	}
+	return os << "]}" << ANSI_RESET;
+}
 
 struct Systems {
 	std::vector<System*> systemList;
@@ -252,10 +325,21 @@ void createLord(Components& components, Entities& entities) {
 		components.assign(ne, Type("Lord", lordCounter++));
 		components.assign(ne, Position{0,0,0});
 		components.assign(ne, Size{10,10,10});
-		components.assign(ne, Shape{});
-		components.assign(ne, Velocity());
+		components.assign(ne, Velocity{
+				-50 + 100 * (100 / (1+(float)(rand() % 1000))),
+				-50 + 100 * (100 / (1+(float)(rand() % 1000))),
+				0
+		});
 		components.assign(ne, Acceleration());
 		components.assign(ne, Brain(0));
+}
+
+void removeRandomEntity(Entities& entities) {
+	EntityIndex randomIndex = rand() % entities.entityList.size();
+	std::cout << "Random index " << randomIndex << "\n";
+	Entity& e = entities.entityList[randomIndex];
+	std::cout << "Picked the entity " << e << "\n";
+	entities.remove(e.id);
 }
 
 int main() {
@@ -265,7 +349,7 @@ int main() {
 	systems.add(new CollisionSystem);
 	systems.add(new TrackPositionSystem);
 	systems.add(new RenderSystem);
-	systems.add(new InspectSystem);
+	// systems.add(new InspectSystem);
 
 	Entities entities;
 	Components components;
@@ -291,13 +375,34 @@ int main() {
 		components.assign(ne4, Size());
 		components.assign(ne4, Brain{50});
 	}
-
+	int count = 0;
 	while (true) {
 #ifdef DEBUG_2
 		std::cout << "\n#####################################\n\n";
 #endif
-		components.get<Brain>(entities.entityList[3])->increase(0.1);
+		auto r = rand() % entities.entityList.size();
+		Brain* b = components.get<Brain>(entities.entityList[r]);
+		std::cout << b << "\n";
+		if (b != nullptr) {
+			b->increase(0.1);
+			std::cout << "Increased brain power of entity " << r << "!\n";
+		} else {
+			std::cout << "The brain is unallocated!\n";
+		}
+
+		std::cout << "random" << ((float)(entities.entityList.size()) * 0.05) << "\n";
+		if (count++ % 10 == 0)
+		for(float i = 1.0; i < ((float)(entities.entityList.size()) * 0.50); i += 1) {
+			removeRandomEntity(entities);
+		}
+
 		createLord(components, entities);
+		for (auto e : entities.entityList) {
+			std::cout << e << " ";
+			printComponents(e, components);
+			std::cout << "\n";
+		}
+		std::cout << entities << "\n";
 		for (System * s : systems.systemList) {
 			for (auto e : entities.entityList) {
 				s->update(e, components);
