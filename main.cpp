@@ -1,6 +1,3 @@
-#define DEBUG_1
-#define DEBUG_2
-
 // Heavy inspiration from https://www.david-colson.com/2020/02/09/making-a-simple-ecs.html
 #include <iostream>
 #include <vector>
@@ -38,14 +35,12 @@ std::bitset<9> bits(Tag tag) {
 
 struct ComponentPool {
 	std::string name;
-	Tag tag;
 	size_t componentSize;
 	size_t totalSize;
 	char * data;
 
-	ComponentPool(std::string const& _name, ComponentId _id, Tag _tag, size_t _componentSize) :
+	ComponentPool(std::string const& _name, ComponentId _id, size_t _componentSize) :
 		name(_name),
-		tag(_tag),
 		componentSize(_componentSize),
 		totalSize(componentSize * MAX_ENTITIES)
 	{
@@ -65,7 +60,12 @@ private: // Disallow copying
 	ComponentPool& operator=(ComponentPool const& other);
 };
 
-std::ostream &operator<<(std::ostream &os, ComponentPool const& m) { return os << ANSI_FG_GREEN << "ComponentPool{" << m.name << " " << static_cast<float>(m.totalSize) / 1000000 << "MB " << bits(m.tag) << "}" << ANSI_RESET; }
+std::ostream &operator<<(std::ostream &os, ComponentPool const& m) { return os << ANSI_FG_GREEN << "ComponentPool{" << m.name << " " << static_cast<float>(m.totalSize) / 1000000 << "MB " << "}" << ANSI_RESET; }
+
+template<typename Component>
+struct ComponentPoolT : ComponentPool {
+	explicit ComponentPoolT() : ComponentPool(Component::NAME, id<Component>(), sizeof(Component)) {}
+};
 
 typedef size_t EntityIndex;
 typedef unsigned int EntityVersion;
@@ -79,10 +79,6 @@ struct EntityId {
 	bool isValid() const {
 		return index != INVALID_ENTITY_INDEX;
 	}
-
-	// bool operator!=(EntityId& other) {
-	// 	return !(other.index == index && other.version == version);
-	// }
 };
 
 std::ostream &operator<<(std::ostream &os, EntityId const& m) {
@@ -149,22 +145,16 @@ struct Components {
 			componentPools.resize(id<Component>() + 1, nullptr);
 		}
 		if (componentPools[id<Component>()] == nullptr) {
-			// TODO how can we template component pool? i.e. ComponentPool<Component>() instead of passing everything
-			ComponentPool* newPool = new ComponentPool(Component::NAME, id<Component>(), tag<Component>(), sizeof(Component));
+			ComponentPool* newPool = new ComponentPoolT<Component>();
 			componentPools[id<Component>()] = newPool;
-#ifdef DEBUG_1
 			std::cout << newStr << *newPool << "\n";
-#endif
 		}
 		auto cp = new ((*componentPools[id<Component>()])[entity.id.index]) Component(init);
 		entity.addComponent<Component>();
-#ifdef DEBUG_2
 		std::cout << assignStr << *cp << " to " << entity << "\n";
-#endif
 		return cp;
 	}
 
-	// TODO make this a reference and return a null component instance instead?
 	template<typename Component>
 	Component* get(Entity const& entity) {
 		if((entity.components & tag<Component>()) != tag<Component>()) {
@@ -240,7 +230,6 @@ struct CollisionSystem : System {
 		components.get<Position>(e);
 		components.get<Physical>(e);
 		components.get<Size>(e);
-		// TODO Update collision quadtree?
 		// TODO create collision event?
 	}
 };
@@ -293,16 +282,12 @@ public:
 			freeEntityIndexes.pop_back();
 			Entity& e = entityList[index];
 			e.id = EntityId{index, entityList[index].id.version + 1};
-#ifdef DEBUG_2
 			std::cout << newStr << e << " there are now " << entityList.size() << "\n";
-#endif
 			return e;
 		} else {
 			entityList.push_back(Entity(EntityId{entityList.size(), 0}));
 			Entity& e = entityList.back();
-#ifdef DEBUG_2
 			std::cout << newStr << e << " there are now " << entityList.size() << "\n";
-#endif
 			return e;
 		}
 	}
@@ -315,7 +300,6 @@ public:
 		e.id = EntityId{INVALID_ENTITY_INDEX, e.id.version};
 		e.components = 0;
 		freeEntityIndexes.push_back(id.index);
-		// std::cout << "Removed " << id << " and pushed " << id.index << " as a free index!\n";
 	}
 };
 
@@ -334,9 +318,7 @@ struct Systems {
 
 	void add(System* system) {
 		systemList.push_back(system);
-#ifdef DEBUG_1
 		std::cout << newStr << *systemList.back() << "\n";
-#endif
 	}
 };
 
@@ -407,10 +389,8 @@ int main() {
 	while (true) {
 		count++;
 
-#ifdef DEBUG_2
 		// TODO put this in the inspect system, when the system can handle all entities
 		std::cout << ANSI_FG_CYAN_DARKER << "\n#####################################\n\n" << ANSI_RESET;
-#endif
 
 		{
 			if (count % 5 == 0) {
@@ -427,9 +407,7 @@ int main() {
 					Entity const& eee = entities.getRandom();
 					eid = eee.id;
 				} while (!eid.isValid() && ++bcount < 10);
-#ifdef DEBUG_2
 				std::cout << "Picked new target " << eid << " for growth\n";
-#endif
 			}
 		}
 
@@ -441,18 +419,12 @@ int main() {
 					eees->size.x = eees->size.x + 0.1;
 					eees->size.y = eees->size.y + 0.1;
 					eees->size.z = eees->size.z + 0.1;
-#ifdef DEBUG_2
 					std::cout << ANSI_FG_ORANGE << "Size of " << ANSI_RESET << eee2 << " grew by 0.1!\n";
-#endif
 				} else {
-#ifdef DEBUG_2
 					std::cout << ANSI_FG_GRAY << "Did not grow " << ANSI_RESET  << eee2 << " as it didnt have a Size!\n";
-#endif
 				}
 			} else {
-#ifdef DEBUG_2
 				std::cout << ANSI_FG_GRAY << "Did not grow " << ANSI_RESET  << eid << " " << eee2 << " as it is invalid!\n";
-#endif
 			}
 		}
 
@@ -461,13 +433,9 @@ int main() {
 			Brain* b = components.get<Brain>(eee4);
 			if (b != nullptr) {
 				b->increase(0.1);
-#ifdef DEBUG_2
 				std::cout << ANSI_FG_ORANGE << "Increased brain power of entity " << ANSI_RESET  << eee4 << "!\n";
-#endif
 			} else {
-#ifdef DEBUG_2
 				std::cout << ANSI_FG_GRAY << "The brain of " << ANSI_RESET  << eee4 << " is unallocated!\n";
-#endif
 			}
 		}
 
@@ -479,9 +447,7 @@ int main() {
 			}
 		}
 		// TODO put this in the inspect system, when the system can handle all entities
-#ifdef DEBUG_2
 		std::cout << entities << "\n";
-#endif
 		std::this_thread::sleep_for(std::chrono::milliseconds(400));
 	}
 }
